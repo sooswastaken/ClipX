@@ -1,0 +1,4 @@
+/__pycache__
+/.eggs
+/build
+dist/.DS_Store
