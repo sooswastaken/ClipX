@@ -165,10 +165,17 @@ class ClipXDelegate(NSObject):
         # Create menu
         menu = NSMenu.alloc().init()
         
+        # Helper to add icon
+        def set_icon(item, name):
+            image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
+            if image:
+                item.setImage_(image)
+        
         # Clear History item
         clear_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Clear History", "clearHistory:", ""
         )
+        set_icon(clear_item, "trash")
         menu.addItem_(clear_item)
         
         menu.addItem_(NSMenuItem.separatorItem())
@@ -177,6 +184,8 @@ class ClipXDelegate(NSObject):
         self._launch_at_startup_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Launch on startup", "toggleLaunchAtStartup:", ""
         )
+        set_icon(self._launch_at_startup_item, "rocket")
+        
         # Set initial state
         if startup.is_launch_at_startup():
             self._launch_at_startup_item.setState_(1)  # NSControlStateValueOn
@@ -190,12 +199,14 @@ class ClipXDelegate(NSObject):
         update_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Check for Updates...", "checkForUpdates:", ""
         )
+        set_icon(update_item, "arrow.triangle.2.circlepath")
         menu.addItem_(update_item)
         
         # Quit item
         quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Quit ClipX", "terminate:", "q"
         )
+        set_icon(quit_item, "power")
         menu.addItem_(quit_item)
         
         self._status_item.setMenu_(menu)
