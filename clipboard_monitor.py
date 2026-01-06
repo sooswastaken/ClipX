@@ -1,10 +1,13 @@
-"""
-Clipboard Monitor - Polls NSPasteboard for changes and maintains history.
-Supports text and image content.
+"""Clipboard Monitor - Polls NSPasteboard for changes and maintains history.
+Supports text and image content with persistent storage.
 """
 
+import base64
+import json
+import os
 import threading
 import time
+from pathlib import Path
 from typing import Callable, List, Optional, Union
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -110,6 +113,10 @@ class ClipboardMonitor:
     Supports text and image content.
     """
     
+    # Path for persistent storage
+    STORAGE_DIR = Path.home() / "Library" / "Application Support" / "ClipX"
+    HISTORY_FILE = STORAGE_DIR / "history.json"
+    
     def __init__(self, on_change: Optional[Callable[[str], None]] = None, max_history: int = 50):
         self.on_change = on_change
         self.max_history = max_history
@@ -120,6 +127,9 @@ class ClipboardMonitor:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        
+        # Load persisted history
+        self._load_history()
     
     def start(self):
         """Start monitoring clipboard in background thread."""
@@ -131,11 +141,74 @@ class ClipboardMonitor:
         self._thread.start()
     
     def stop(self):
-        """Stop monitoring clipboard."""
+        """Stop monitoring clipboard and save history."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=1.0)
             self._thread = None
+        self._save_history()
+    
+    def _load_history(self):
+        """Load history from disk."""
+        try:
+            if not self.HISTORY_FILE.exists():
+                print("[ClipboardMonitor] No history file found, starting fresh")
+                return
+            
+            with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            for item_data in data:
+                # Decode image data if present
+                image_data = None
+                thumbnail = None
+                if item_data.get('image_data'):
+                    image_data = base64.b64decode(item_data['image_data'])
+                    # Recreate thumbnail from image data
+                    from AppKit import NSImage, NSData
+                    ns_data = NSData.dataWithBytes_length_(image_data, len(image_data))
+                    image = NSImage.alloc().initWithData_(ns_data)
+                    if image:
+                        thumbnail = create_thumbnail(image, 32)
+                
+                item = ClipboardItem(
+                    content_type=item_data['content_type'],
+                    timestamp=datetime.fromisoformat(item_data['timestamp']),
+                    text_content=item_data.get('text_content'),
+                    image_data=image_data,
+                    thumbnail=thumbnail
+                )
+                self.history.append(item)
+            
+            print(f"[ClipboardMonitor] Loaded {len(self.history)} items from history")
+        except Exception as e:
+            print(f"[ClipboardMonitor] Error loading history: {e}")
+    
+    def _save_history(self):
+        """Save history to disk."""
+        try:
+            # Ensure directory exists
+            self.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+            
+            data = []
+            with self._lock:
+                for item in self.history:
+                    item_data = {
+                        'content_type': item.content_type,
+                        'timestamp': item.timestamp.isoformat(),
+                        'text_content': item.text_content,
+                    }
+                    # Encode image data as base64
+                    if item.image_data:
+                        item_data['image_data'] = base64.b64encode(item.image_data).decode('ascii')
+                    data.append(item_data)
+            
+            with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            print(f"[ClipboardMonitor] Saved {len(data)} items to history")
+        except Exception as e:
+            print(f"[ClipboardMonitor] Error saving history: {e}")
     
     def get_history(self) -> List[ClipboardItem]:
         """Get clipboard history (thread-safe)."""
@@ -234,6 +307,9 @@ class ClipboardMonitor:
             # Trim to max size
             if len(self.history) > self.max_history:
                 self.history = self.history[:self.max_history]
+        
+        # Persist to disk
+        self._save_history()
         
         # Notify callback
         if self.on_change:
