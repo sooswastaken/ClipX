@@ -14,6 +14,9 @@ from ApplicationServices import (
     kAXSizeAttribute,
     AXIsProcessTrusted,
 )
+from HIServices import AXIsProcessTrustedWithOptions
+from Foundation import NSDictionary
+import subprocess
 from AppKit import NSScreen
 
 
@@ -179,4 +182,42 @@ class AccessibilityHelper:
     @staticmethod
     def check_accessibility_permission() -> bool:
         """Check if accessibility permission is granted."""
-        return AXIsProcessTrusted()
+        try:
+            return AXIsProcessTrusted()
+        except Exception as e:
+            print(f"[Accessibility] Error checking permission: {e}")
+            return False
+    
+    @staticmethod
+    def request_accessibility_permission() -> bool:
+        """
+        Request accessibility permission with system prompt.
+        Shows the macOS system dialog asking user to grant permission.
+        Returns True if permission is already granted, False otherwise.
+        """
+        try:
+            # kAXTrustedCheckOptionPrompt = "AXTrustedCheckOptionPrompt"
+            options = NSDictionary.dictionaryWithObject_forKey_(True, "AXTrustedCheckOptionPrompt")
+            return AXIsProcessTrustedWithOptions(options)
+        except Exception as e:
+            print(f"[Accessibility] Error requesting permission: {e}")
+            return False
+    
+    @staticmethod
+    def open_accessibility_settings():
+        """
+        Open System Settings to the Accessibility privacy pane.
+        """
+        try:
+            # macOS Ventura+ uses this URL scheme
+            subprocess.run([
+                "open", 
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            ], check=True)
+        except Exception as e:
+            print(f"[Accessibility] Error opening settings: {e}")
+            # Fallback for older macOS
+            try:
+                subprocess.run(["open", "/System/Library/PreferencePanes/Security.prefPane"], check=True)
+            except Exception:
+                pass

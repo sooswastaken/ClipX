@@ -83,6 +83,8 @@ class ClipXDelegate(NSObject):
         self._status_item = None
         self._popup_visible = False
         self._debug_mode = False  # Default to False
+        self._has_accessibility_permission = False
+        self._permission_check_timer = None
         
         return self
     
@@ -100,14 +102,25 @@ class ClipXDelegate(NSObject):
         
         self._setup_status_item()
         
-        # Check accessibility permission
+        # Check accessibility permission - this will show the system prompt
         self._accessibility = AccessibilityHelper()
-        has_access = AccessibilityHelper.check_accessibility_permission()
-        print(f"[Main] Accessibility permission: {has_access}", flush=True)
-        if not has_access:
+        self._has_accessibility_permission = AccessibilityHelper.request_accessibility_permission()
+        print(f"[Main] Accessibility permission: {self._has_accessibility_permission}", flush=True)
+        
+        # Check if we just updated (--updated flag passed by update script)
+        just_updated = '--updated' in sys.argv
+        if just_updated:
+            print("[Main] Detected post-update relaunch", flush=True)
+        
+        if not self._has_accessibility_permission:
             print("\n⚠️  Accessibility permission required!")
-            print("   Go to: System Settings > Privacy & Security > Accessibility")
-            print("   Enable access for Terminal or your Python environment.\n", flush=True)
+            print("   The system should have prompted you to grant access.")
+            print("   If not, go to: System Settings > Privacy & Security > Accessibility\n", flush=True)
+            # Show an appropriate alert
+            if just_updated:
+                self._show_post_update_permission_alert()
+            else:
+                self._show_accessibility_required_alert()
         
         # Create popup
         print("[Main] Creating popup window...", flush=True)
@@ -128,10 +141,9 @@ class ClipXDelegate(NSObject):
         
         # Start hotkey handler
         print("[Main] Starting hotkey handler...", flush=True)
-        # Start hotkey handler
-        print("[Main] Starting hotkey handler...", flush=True)
         self._hotkey_handler = HotkeyHandler(
             on_trigger=self._on_hotkey_trigger,
+            on_permission_denied=self._on_hotkey_permission_denied,
             debug=self._debug_mode
         )
         self._hotkey_handler.start()
@@ -144,6 +156,10 @@ class ClipXDelegate(NSObject):
         print("   • Copy text anywhere (Cmd+C) to add to history")
         print("   • Press Cmd+Option+V to show history popup")
         print("   • Press Ctrl+C in terminal to quit\n", flush=True)
+        
+        # Start periodic permission check if permission was denied
+        if not self._has_accessibility_permission:
+            self._start_permission_check_timer()
     
     def _setup_status_item(self):
         """Create the menu bar item."""
@@ -279,6 +295,99 @@ class ClipXDelegate(NSObject):
             preview += '...'
         print(f"📋 Copied: {preview}")
     
+    def _show_accessibility_required_alert(self):
+        """Show an alert explaining that accessibility permission is required."""
+        from AppKit import NSAlert, NSAlertStyleWarning
+        
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("Accessibility Permission Required")
+        alert.setInformativeText_(
+            "ClipX needs Accessibility access to detect the Cmd+Option+V hotkey.\n\n"
+            "Without this permission, clipboard monitoring still works, but you won't be able to "
+            "use the keyboard shortcut to open the clipboard history.\n\n"
+            "Click 'Open Settings' to grant access, then enable ClipX in the list."
+        )
+        alert.setAlertStyle_(NSAlertStyleWarning)
+        alert.addButtonWithTitle_("Open Settings")
+        alert.addButtonWithTitle_("Later")
+        
+        response = alert.runModal()
+        if response == 1000:  # Open Settings
+            AccessibilityHelper.open_accessibility_settings()
+    
+    def _show_post_update_permission_alert(self):
+        """Show alert after update explaining that permission needs to be re-granted."""
+        from AppKit import NSAlert, NSAlertStyleWarning
+        
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("ClipX Updated Successfully!")
+        alert.setInformativeText_(
+            "ClipX has been updated to the latest version.\n\n"
+            "⚠️ macOS requires you to re-authorize accessibility access after updates. "
+            "This is a macOS security feature.\n\n"
+            "If you see an OLD ClipX entry in the list, it no longer works — "
+            "macOS tracks each app version separately.\n\n"
+            "Please click 'Open Settings' and:\n"
+            "1. Remove the old ClipX entry (click −)\n"
+            "2. Click + and add ClipX again\n"
+            "3. Enable the new ClipX entry\n\n"
+            "The hotkey (Cmd+Option+V) will start working automatically."
+        )
+        alert.setAlertStyle_(NSAlertStyleWarning)
+        alert.addButtonWithTitle_("Open Settings")
+        alert.addButtonWithTitle_("Later")
+        
+        response = alert.runModal()
+        if response == 1000:  # Open Settings
+            AccessibilityHelper.open_accessibility_settings()
+    
+    def _start_permission_check_timer(self):
+        """Start a timer to periodically check if accessibility permission was granted."""
+        from Foundation import NSTimer
+        
+        # Check every 3 seconds
+        self._permission_check_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            3.0,
+            self,
+            'checkPermissionTimer:',
+            None,
+            True
+        )
+        print("[Main] Started permission check timer", flush=True)
+    
+    def checkPermissionTimer_(self, timer):
+        """Timer callback to check if accessibility permission was granted."""
+        has_permission = AccessibilityHelper.check_accessibility_permission()
+        
+        if has_permission and not self._has_accessibility_permission:
+            print("[Main] ✓ Accessibility permission granted!", flush=True)
+            self._has_accessibility_permission = True
+            
+            # Stop the timer
+            if self._permission_check_timer:
+                self._permission_check_timer.invalidate()
+                self._permission_check_timer = None
+            
+            # Restart the hotkey handler now that we have permission
+            if self._hotkey_handler:
+                self._hotkey_handler.stop()
+                self._hotkey_handler = HotkeyHandler(
+                    on_trigger=self._on_hotkey_trigger,
+                    on_permission_denied=self._on_hotkey_permission_denied,
+                    debug=self._debug_mode
+                )
+                self._hotkey_handler.start()
+                print("[Main] Hotkey handler restarted with new permission", flush=True)
+    
+    def _on_hotkey_permission_denied(self):
+        """Called from HotkeyHandler when CGEventTap creation fails."""
+        print("[Main] Hotkey handler reported permission denied", flush=True)
+        # Start the permission check timer if not already running
+        if not self._permission_check_timer:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                '_start_permission_check_timer', None, False
+            )
+
     def _on_hotkey_trigger(self):
         """Called when Cmd+Option+V is pressed."""
         # This is called from a background thread - dispatch to main thread

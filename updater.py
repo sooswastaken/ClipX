@@ -225,9 +225,9 @@ echo "Replacing {old_app_path} with {new_app_path}"
 rm -rf "{old_app_path}"
 mv "{new_app_path}" "{old_app_path}"
 
-# Relaunch
+# Relaunch with --updated flag so app knows it was just updated
 echo "Relaunching..."
-open "{old_app_path}"
+open "{old_app_path}" --args --updated
 
 # Cleanup script
 rm -- "$0"

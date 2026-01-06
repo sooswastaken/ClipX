@@ -39,13 +39,17 @@ class HotkeyHandler:
     Detects Cmd+Option+V to trigger the clipboard popup.
     """
     
-    def __init__(self, on_trigger: Optional[Callable[[], None]] = None, debug: bool = False):
+    def __init__(self, on_trigger: Optional[Callable[[], None]] = None, 
+                 on_permission_denied: Optional[Callable[[], None]] = None,
+                 debug: bool = False):
         self.on_trigger = on_trigger
+        self.on_permission_denied = on_permission_denied
         self.debug = debug
         self._tap = None
         self._run_loop_source = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
+        self._permission_denied = False
     
     def start(self):
         """Start listening for hotkeys in a background thread."""
@@ -82,7 +86,9 @@ class HotkeyHandler:
         if self._tap is None:
             print("[HotkeyHandler] ERROR: Failed to create event tap!")
             print("[HotkeyHandler] Please grant Accessibility permission in System Settings > Privacy & Security > Accessibility")
-            print("[HotkeyHandler] You need to add your IDE (Antigravity) to the list and enable it.")
+            self._permission_denied = True
+            if self.on_permission_denied:
+                self.on_permission_denied()
             return
         
         print("[HotkeyHandler] Event tap created successfully!")
