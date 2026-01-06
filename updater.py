@@ -38,6 +38,23 @@ class Updater:
         return None
 
     @staticmethod
+    def get_compare_data(local_sha, remote_sha):
+        """
+        Fetch the list of commits between local_sha and remote_sha.
+        """
+        try:
+            url = f"https://api.github.com/repos/sooswastaken/ClipX/compare/{local_sha}...{remote_sha}"
+            print(f"[Updater] Fetching changelog from {url}...")
+            with urllib.request.urlopen(url, timeout=10) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode('utf-8'))
+                    return data.get("commits", [])
+        except Exception as e:
+            print(f"[Updater] Error fetching changelog: {e}")
+            return []
+        return []
+
+    @staticmethod
     def check_for_updates():
         """
         Check GitHub for the latest release.
@@ -60,7 +77,8 @@ class Updater:
                         "body": data.get("body"),
                         "html_url": data.get("html_url"),
                         "assets": data.get("assets", []),
-                        "status": "UNKNOWN"
+                        "status": "UNKNOWN",
+                        "changelog": []
                     }
                     
                     # Find the asset download URL
@@ -86,6 +104,11 @@ class Updater:
                             release_info["status"] = "UP_TO_DATE"
                         else:
                             release_info["status"] = "UPDATE_AVAILABLE"
+                            # Fetch changelog
+                            commits = Updater.get_compare_data(local_sha, remote_sha)
+                            # Extract clean messages (first line)
+                            release_info["changelog"] = [c['commit']['message'].split('\n')[0] for c in commits]
+                            
                     elif not local_sha:
                         # No local version info (dev mode or old build), assume update available ??
                         # Or maybe UNKNOWN. Let's say UNKNOWN but available to download.
@@ -97,6 +120,91 @@ class Updater:
             print(f"[Updater] Error checking for updates: {e}")
             return None
         return None
+
+    @staticmethod
+    def download_and_install(download_url):
+        # ... existing download code ...
+        # (Note: keeping existing methods, just overwriting check_for_updates upwards)
+        pass 
+
+    # We need to preserve the other methods we aren't changing, but since replace_file_content 
+    # replaces the block, I'll need to be careful. 
+    # Actually, the previous tool call covered check_for_updates. 
+    # I should target check_for_updates specifically, and show_update_dialog specifically.
+    pass
+
+    @staticmethod
+    def show_update_dialog(release_info):
+        """
+        Show a dialog to the user about the update.
+        Returns True if user wants to update, False otherwise.
+        """
+        alert = NSAlert.alloc().init()
+        
+        if release_info:
+            status = release_info.get("status", "UNKNOWN")
+            tag_name = release_info.get('tag_name')
+            published_date = release_info.get('published_at', 'Unknown date').split('T')[0]
+            
+            if status == "UP_TO_DATE":
+                alert.setMessageText_("You are up to date")
+                alert.setInformativeText_(
+                    f"ClipX {tag_name} is currently the newest version available.\n\n"
+                    f"Installed Commit: {Updater.get_local_version().get('commit_sha')[:7]}\n"
+                    f"Latest Commit: {release_info.get('remote_sha')[:7]}"
+                )
+                alert.addButtonWithTitle_("OK")
+                alert.runModal()
+                return False
+                
+            elif status == "UPDATE_AVAILABLE":
+                alert.setMessageText_("Update Available")
+                
+                changelog_text = ""
+                changelog = release_info.get("changelog", [])
+                if changelog:
+                    changelog_text = "\n\nChanges:\n"
+                    # Show last 10 commits
+                    for msg in reversed(changelog[-10:]):
+                         changelog_text += f"- {msg}\n"
+                    if len(changelog) > 10:
+                        changelog_text = f"\n\nChanges (last 10 of {len(changelog)}):\n" + "\n".join([f"- {msg}" for msg in reversed(changelog[-10:])]) + "\n..."
+                
+                info_text = (
+                    f"A new version of ClipX is available!\n\n"
+                    f"Release: {tag_name} ({published_date})\n"
+                    f"{changelog_text}\n\n"
+                    "Would you like to download and install this update?"
+                )
+                alert.setInformativeText_(info_text)
+                alert.addButtonWithTitle_("Download & Update")
+                alert.addButtonWithTitle_("Cancel")
+                response = alert.runModal()
+                return response == 1000
+                
+            else:
+                # UNKNOWN or fallback
+                alert.setMessageText_("Check for Updates")
+                info_text = (
+                    f"Latest Release: {tag_name}\n"
+                    f"Published: {published_date}\n\n"
+                    f"Release Notes:\n{release_info.get('body')}\n\n"
+                    "Would you like to download this update?"
+                )
+                alert.setInformativeText_(info_text)
+                alert.addButtonWithTitle_("Download & Update")
+                alert.addButtonWithTitle_("Cancel")
+                response = alert.runModal()
+                return response == 1000
+
+        else:
+            alert.setMessageText_("Update Check Failed")
+            alert.setInformativeText_("Could not verify release information. Please check your internet connection.")
+            alert.setAlertStyle_(NSAlertStyleCritical)
+            alert.addButtonWithTitle_("OK")
+            
+            alert.runModal()
+            return False
 
     @staticmethod
     def _create_install_script(old_app_path, new_app_path, pid):
@@ -217,10 +325,24 @@ rm -- "$0"
                 
             elif status == "UPDATE_AVAILABLE":
                 alert.setMessageText_("Update Available")
+                
+                changelog_text = ""
+                changelog = release_info.get("changelog", [])
+                if changelog:
+                    # Show last 10 commits
+                    commits_to_show = changelog[-10:]
+                    # Reverse so newest is top
+                    commits_to_show.reverse()
+                    
+                    changelog_text = "\n\nChanges:\n" + "\n".join([f"- {msg}" for msg in commits_to_show])
+                    
+                    if len(changelog) > 10:
+                        changelog_text += f"\n... and {len(changelog) - 10} more commits."
+                        
                 info_text = (
                     f"A new version of ClipX is available!\n\n"
                     f"Release: {tag_name} ({published_date})\n"
-                    f"Release Notes:\n{release_info.get('body')}\n\n"
+                    f"{changelog_text}\n\n"
                     "Would you like to download and install this update?"
                 )
                 alert.setInformativeText_(info_text)
