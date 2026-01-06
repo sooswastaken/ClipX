@@ -43,6 +43,7 @@ from Quartz import (
     kCAMediaTimingFunctionEaseOut,
     CAMediaTimingFunction,
     CASpringAnimation,
+    CABasicAnimation,
     CALayer,
 )
 import objc
@@ -678,9 +679,9 @@ class ClipboardPopup(NSPanel):
         
         # Core Animation transaction
         CATransaction.begin()
-        CATransaction.setAnimationDuration_(0.4) # Spring takes a bit longer visually
+        CATransaction.setAnimationDuration_(0.15) # Snappy duration
         
-        # Spring Animation for position
+        # Basic Animation for position instead of Spring
         # We need to animate the layer's position property
         layer = self._selection_view.layer()
         
@@ -700,19 +701,16 @@ class ClipboardPopup(NSPanel):
         new_pos_x = target_frame.origin.x + (target_frame.size.width * anchor.x)
         new_pos_y = target_frame.origin.y + (target_frame.size.height * anchor.y)
         
-        spring = CASpringAnimation.animationWithKeyPath_("position")
-        spring.setDamping_(12.0)
-        spring.setMass_(1.0)
-        spring.setStiffness_(150.0)
-        spring.setInitialVelocity_(0.0)
-        spring.setDuration_(spring.settlingDuration())
+        basic = CABasicAnimation.animationWithKeyPath_("position")
+        basic.setDuration_(0.15)
+        basic.setTimingFunction_(CAMediaTimingFunction.functionWithName_(kCAMediaTimingFunctionEaseOut))
         
-        spring.setFromValue_(NSValue.valueWithPoint_(current_pos))
-        spring.setToValue_(NSValue.valueWithPoint_(NSMakePoint(new_pos_x, new_pos_y)))
+        basic.setFromValue_(NSValue.valueWithPoint_(current_pos))
+        basic.setToValue_(NSValue.valueWithPoint_(NSMakePoint(new_pos_x, new_pos_y)))
         
         # We must set the final value on the model layer immediately so it stays there after animation
         layer.setPosition_(NSMakePoint(new_pos_x, new_pos_y))
-        layer.addAnimation_forKey_(spring, "position")
+        layer.addAnimation_forKey_(basic, "position")
         
         CATransaction.commit()
 
