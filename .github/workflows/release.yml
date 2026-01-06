@@ -1,9 +1,12 @@
-name: Build and Release macOS App
+name: Continuous Build
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
 
 jobs:
   build-and-release:
@@ -14,6 +17,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -36,9 +41,20 @@ jobs:
         zip -r ClipX.zip ClipX.app
         cd ..
 
-    - name: Create Release
+    - name: Update 'latest' Tag
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        # Force update the 'latest' tag to the current commit
+        git tag -fa latest -m "Latest build"
+        git push -f origin latest
+
+    - name: Publish Release
       uses: softprops/action-gh-release@v1
       with:
+        tag_name: latest
+        name: Automatic Build
+        body: "Automated build from the latest commit."
         files: dist/ClipX.zip
         draft: false
         prerelease: false
