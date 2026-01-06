@@ -65,6 +65,7 @@ from hotkey_handler import HotkeyHandler
 from accessibility import AccessibilityHelper, ElementRect
 from popup_window import ClipboardPopup, calculate_popup_position, ITEM_HEIGHT, PADDING, POPUP_MAX_HEIGHT
 from updater import Updater
+import startup
 
 
 class ClipXDelegate(NSObject):
@@ -169,6 +170,19 @@ class ClipXDelegate(NSObject):
             "Clear History", "clearHistory:", ""
         )
         menu.addItem_(clear_item)
+        
+        menu.addItem_(NSMenuItem.separatorItem())
+        
+        # Launch on startup item
+        self._launch_at_startup_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Launch on startup", "toggleLaunchAtStartup:", ""
+        )
+        # Set initial state
+        if startup.is_launch_at_startup():
+            self._launch_at_startup_item.setState_(1)  # NSControlStateValueOn
+        else:
+            self._launch_at_startup_item.setState_(0)  # NSControlStateValueOff
+        menu.addItem_(self._launch_at_startup_item)
         
         menu.addItem_(NSMenuItem.separatorItem())
         
@@ -336,6 +350,17 @@ class ClipXDelegate(NSObject):
                 self._popup.hide()
                 self._popup_visible = False
                 print("[Main] Popup hidden after clearing history")
+
+    def toggleLaunchAtStartup_(self, sender):
+        """Toggle launch at startup."""
+        current_state = sender.state()
+        new_state = not current_state
+        
+        if startup.toggle_launch_at_startup(new_state):
+            sender.setState_(1 if new_state else 0)
+            print(f"[Main] Launch at startup set to: {new_state}")
+        else:
+            print("[Main] Failed to toggle launch at startup")
 
     def checkForUpdates_(self, sender):
         """Check for updates."""
