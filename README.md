@@ -1,6 +1,6 @@
 # ClipX
 
-A native clipboard history manager for macOS — bringing Windows' `Win + V` clipboard experience to your Mac.
+A native clipboard history manager for macOS
 
 ![macOS](https://img.shields.io/badge/macOS-13.0+-blue)
 ![Python](https://img.shields.io/badge/Python-3.10+-green)
