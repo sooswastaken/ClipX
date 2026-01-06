@@ -316,13 +316,18 @@ class ClipboardMonitor:
                         image_data: Optional[bytes], thumbnail):
         """Add new content to history."""
         with self._lock:
-            # For deduplication, compare text for text items, image data for image items
+            # For deduplication, remove any existing identical items
             if content_type == "text" and text_content:
                 self.history = [item for item in self.history 
                                if not (item.content_type == "text" and item.text_content == text_content)]
             elif content_type == "image" and image_data:
-                # For images, we just add (don't dedupe by content - too expensive)
-                pass
+                self.history = [item for item in self.history 
+                               if not (item.content_type == "image" and item.image_data == image_data)]
+            elif content_type == "mixed" and text_content and image_data:
+                 self.history = [item for item in self.history 
+                               if not (item.content_type == "mixed" and 
+                                       item.text_content == text_content and 
+                                       item.image_data == image_data)]
             
             # Add to front
             item = ClipboardItem(
