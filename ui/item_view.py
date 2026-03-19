@@ -183,7 +183,7 @@ class ClipboardItemView(NSView):
             self.addSubview_(self._badge_bg)
             
             self._badge_label = NSTextField.alloc().initWithFrame_(
-                NSMakeRect(badge_x, badge_y - 1, badge_w, badge_h)
+                NSMakeRect(badge_x, badge_y - 2, badge_w, badge_h)
             )
             self._badge_label.setStringValue_(str(item_number))
             from AppKit import NSTextAlignmentCenter

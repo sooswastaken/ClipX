@@ -625,8 +625,9 @@ def main():
         # We can also silence print statements if desired, but just not writing to disk is the main goal
         pass
 
-    # Handle Ctrl+C gracefully
-    signal.signal(signal.SIGINT, lambda s, f: NSApp.terminate_(None))
+    # Handle Ctrl+C gracefully (only in terminal/dev mode)
+    if debug_mode:
+        signal.signal(signal.SIGINT, lambda s, f: NSApp.terminate_(None))
     
     # Create application
     app = NSApplication.sharedApplication()
