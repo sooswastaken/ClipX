@@ -381,6 +381,8 @@ class ClipXDelegate(NSObject):
                 self._hotkey_handler.stop()
                 self._hotkey_handler = HotkeyHandler(
                     on_trigger=self._on_hotkey_trigger,
+                    on_trigger_2nd=self._on_hotkey_trigger_2nd,
+                    on_trigger_3rd=self._on_hotkey_trigger_3rd,
                     on_permission_denied=self._on_hotkey_permission_denied,
                     debug=self._debug_mode
                 )
