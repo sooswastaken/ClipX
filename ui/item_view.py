@@ -65,9 +65,10 @@ class ClipboardItemView(NSView):
             label_x = PADDING + thumb_size + thumb_margin
             label_width = self.frame().size.width - label_x - PADDING
             
-            # Create image view for thumbnail
+            # Create image view for thumbnail - positioned above the badge area
+            thumb_y = ITEM_HEIGHT - thumb_size - 10  # push up to upper portion
             self._thumbnail_view = NSImageView.alloc().initWithFrame_(
-                NSMakeRect(PADDING, (ITEM_HEIGHT - thumb_size) / 2, thumb_size, thumb_size)
+                NSMakeRect(PADDING, thumb_y, thumb_size, thumb_size)
             )
             self._thumbnail_view.setImage_(self._item.thumbnail)
             self._thumbnail_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
