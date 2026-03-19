@@ -599,6 +599,29 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
         """Delegate to FocusManager."""
         self.focus_manager.store_frontmost_app(app)
     
+    def select_and_confirm_item(self, item_number: int):
+        """Directly select and paste item by number (1-based). Number 1 = most recent."""
+        if item_number < 1 or item_number > len(self._items):
+            print(f"[Popup] Item {item_number} not in history (have {len(self._items)})", flush=True)
+            return
+        
+        # item_number maps to internal index (1-based, matching _item_views)
+        internal_index = item_number
+        
+        # Deselect current
+        if self._selected_index == 0:
+            if self._edit_button_view:
+                self._edit_button_view.set_selected(False)
+        elif 1 <= self._selected_index <= len(self._item_views):
+            self._item_views[self._selected_index - 1].set_selected(False)
+        
+        self._selected_index = internal_index
+        self._item_views[internal_index - 1].set_selected(True)
+        self.confirm_selection()
+    
+    # macOS keyCode -> number: 18=1, 19=2, 20=3, 21=4, 23=5, 22=6, 26=7, 28=8
+    _NUMBER_KEYCODES = {18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8}
+    
     def keyDown_(self, event):
         """Handle keyboard events."""
         key_code = event.keyCode()
@@ -611,6 +634,8 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
             self.confirm_selection()
         elif key_code == 53:  # Escape
             self.hide()
+        elif key_code in self._NUMBER_KEYCODES:
+            self.select_and_confirm_item(self._NUMBER_KEYCODES[key_code])
         else:
             pass
     

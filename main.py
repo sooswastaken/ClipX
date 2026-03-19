@@ -260,6 +260,12 @@ class ClipXDelegate(NSObject):
                     self._popup.hide()
                     self._popup_visible = False
                     return None
+                # Number keys 1-8 - direct select and paste
+                elif key_code in (18, 19, 20, 21, 23, 22, 26, 28):
+                    number_map = {18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8}
+                    self._popup.select_and_confirm_item(number_map[key_code])
+                    self._popup_visible = False
+                    return None
                 # Any other key - dismiss the popup
                 else:
                     print(f"[KeyMonitor] Dismissing popup on key {key_code}", flush=True)

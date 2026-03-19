@@ -158,6 +158,44 @@ class ClipboardItemView(NSView):
         self._label.cell().setTruncatesLastVisibleLine_(True)
         self.addSubview_(self._label)
         
+        # Number badge in bottom-left
+        item_number = self._index  # _index is 1-based (edit button is 0)
+        if 1 <= item_number <= 8:
+            badge_w = 18
+            badge_h = 18
+            badge_x = PADDING
+            badge_y = 6
+            
+            self._badge_bg = NSView.alloc().initWithFrame_(
+                NSMakeRect(badge_x, badge_y, badge_w, badge_h)
+            )
+            self._badge_bg.setWantsLayer_(True)
+            badge_layer = self._badge_bg.layer()
+            if badge_layer:
+                badge_layer.setCornerRadius_(5)
+                badge_layer.setBackgroundColor_(
+                    NSColor.colorWithWhite_alpha_(1.0, 0.10).CGColor()
+                )
+                badge_layer.setBorderWidth_(0.5)
+                badge_layer.setBorderColor_(
+                    NSColor.colorWithWhite_alpha_(1.0, 0.08).CGColor()
+                )
+            self.addSubview_(self._badge_bg)
+            
+            self._badge_label = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(badge_x, badge_y - 1, badge_w, badge_h)
+            )
+            self._badge_label.setStringValue_(str(item_number))
+            from AppKit import NSTextAlignmentCenter
+            self._badge_label.setAlignment_(NSTextAlignmentCenter)
+            self._badge_label.setBezeled_(False)
+            self._badge_label.setDrawsBackground_(False)
+            self._badge_label.setEditable_(False)
+            self._badge_label.setSelectable_(False)
+            self._badge_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.55, 1.0))
+            self._badge_label.setFont_(NSFont.monospacedSystemFontOfSize_weight_(10, 0.3))
+            self.addSubview_(self._badge_label)
+        
         # Timestamp - Right aligned
         time_str = self._item.timestamp.strftime("%H:%M")
         self._time_label = NSTextField.alloc().initWithFrame_(
