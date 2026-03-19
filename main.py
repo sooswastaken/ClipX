@@ -584,20 +584,19 @@ class ClipXDelegate(NSObject):
         """Check for updates."""
         print("[Main] User requested update check...")
         
-        # Run in background to avoid blocking UI? 
-        # For simplicity in this iteration, we'll run sync (might block briefly)
-        # or use a simple timer/thread if needed. Since urllib is blocking, 
-        # let's just do it. Ideally dispatch_async.
-        
         release_info = Updater.check_for_updates()
         if Updater.show_update_dialog(release_info):
             if release_info:
-                # If install_and_restart returns True, it means the update script is running
-                # and we should terminate to allow it to replace the app file.
-                if Updater.install_and_restart(release_info.get('download_url')):
-                    print("[Main] Update script started. Terminating...")
-                    from AppKit import NSApp
-                    NSApp.terminate_(self)
+                def on_update_complete(success):
+                    if success:
+                        print("[Main] Update script started. Terminating...")
+                        from AppKit import NSApp
+                        NSApp.terminate_(self)
+                
+                Updater.install_and_restart_async(
+                    release_info.get('download_url'),
+                    on_complete=on_update_complete
+                )
 
     def applicationWillTerminate_(self, notification):
         """Cleanup on exit."""
