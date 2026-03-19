@@ -25,7 +25,7 @@ OPTIONS = {
         'NSHumanReadableCopyright': 'Copyright © 2026',
     },
     # Explicitly include detecting local packages + system frameworks
-    'packages': LOCAL_PACKAGES + ['objc', 'AppKit', 'Foundation', 'Quartz', 'ApplicationServices'],
+    'packages': LOCAL_PACKAGES + ['objc', 'AppKit', 'Foundation', 'Quartz', 'ApplicationServices', 'HIServices'],
 }
 
 setup(

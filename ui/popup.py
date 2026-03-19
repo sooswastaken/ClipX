@@ -411,14 +411,15 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
         pasteboard.clearContents()
         
         if hasattr(item, 'content_type'):
-            if item.content_type == "image" and item.image_data:
+            img_bytes = item.load_image_data() if item.has_image() else None
+            if item.content_type == "image" and img_bytes:
                 from AppKit import NSData
-                png_data = NSData.dataWithBytes_length_(item.image_data, len(item.image_data))
+                png_data = NSData.dataWithBytes_length_(img_bytes, len(img_bytes))
                 pasteboard.setData_forType_(png_data, NSPasteboardTypePNG)
                 print("[Popup] Image placed on clipboard", flush=True)
-            elif item.content_type == "mixed" and item.image_data and item.text_content:
+            elif item.content_type == "mixed" and img_bytes and item.text_content:
                 from AppKit import NSData
-                png_data = NSData.dataWithBytes_length_(item.image_data, len(item.image_data))
+                png_data = NSData.dataWithBytes_length_(img_bytes, len(img_bytes))
                 pasteboard.setData_forType_(png_data, NSPasteboardTypePNG)
                 pasteboard.setString_forType_(item.text_content, NSPasteboardTypeString)
                 print("[Popup] Mixed content placed on clipboard", flush=True)

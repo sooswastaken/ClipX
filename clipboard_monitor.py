@@ -1,8 +1,10 @@
 """Clipboard Monitor - Polls NSPasteboard for changes and maintains history.
 Supports text and image content with persistent storage.
+Images are stored on disk and loaded lazily to minimize memory usage.
 """
 
 import base64
+import hashlib
 import json
 import os
 import threading
@@ -24,17 +26,32 @@ from AppKit import (
     NSMakeRect,
     NSCompositingOperationCopy,
     NSGraphicsContext,
+    NSData,
 )
+
+
+# --- Storage paths ---
+STORAGE_DIR = Path.home() / "Library" / "Application Support" / "ClipX"
+IMAGES_DIR = STORAGE_DIR / "images"
+HISTORY_FILE = STORAGE_DIR / "history.json"
+
+# Max dimension for stored images (saves disk and memory when loaded)
+MAX_IMAGE_DIM = 512
 
 
 @dataclass
 class ClipboardItem:
-    """A single clipboard history item supporting text and images."""
+    """A single clipboard history item supporting text and images.
+    Images are stored on disk; only a small thumbnail is kept in memory.
+    """
     content_type: str  # "text", "image", or "mixed"
     timestamp: datetime
     text_content: Optional[str] = None
-    image_data: Optional[bytes] = None  # PNG data for storage
-    thumbnail: Optional[object] = field(default=None, repr=False)  # NSImage, excluded from repr
+    image_path: Optional[str] = None       # Path to on-disk PNG
+    thumbnail: Optional[object] = field(default=None, repr=False)  # NSImage, small
+    
+    # --- DEPRECATED: kept only for migration from old format ---
+    image_data: Optional[bytes] = field(default=None, repr=False)
     
     @property
     def preview(self) -> str:
@@ -54,25 +71,33 @@ class ClipboardItem:
         return self.text_content or ""
     
     def has_image(self) -> bool:
-        return self.image_data is not None
+        return self.image_path is not None or self.image_data is not None
+    
+    def load_image_data(self) -> Optional[bytes]:
+        """Load full image data from disk on demand. Returns PNG bytes or None."""
+        # Legacy in-memory data (shouldn't happen after migration)
+        if self.image_data is not None:
+            return self.image_data
+        if self.image_path and os.path.exists(self.image_path):
+            try:
+                with open(self.image_path, 'rb') as f:
+                    return f.read()
+            except Exception as e:
+                print(f"[ClipboardItem] Error loading image from {self.image_path}: {e}")
+        return None
 
 
 def create_thumbnail(image: 'NSImage', size: int = 32) -> 'NSImage':
     """Create a square thumbnail from an NSImage."""
     try:
-        # Get original size
         orig_size = image.size()
-        
-        # Calculate scale to fill the square (crop to fit)
         scale = max(size / orig_size.width, size / orig_size.height)
         new_width = orig_size.width * scale
         new_height = orig_size.height * scale
         
-        # Create new image
         thumbnail = NSImage.alloc().initWithSize_(NSMakeSize(size, size))
         thumbnail.lockFocus()
         
-        # Draw scaled and centered
         x_offset = (size - new_width) / 2
         y_offset = (size - new_height) / 2
         
@@ -106,6 +131,55 @@ def image_to_png_data(image: 'NSImage') -> Optional[bytes]:
         return None
 
 
+def _downscale_png(png_bytes: bytes, max_dim: int = MAX_IMAGE_DIM) -> bytes:
+    """Downscale PNG data so the longest edge is at most max_dim pixels.
+    Returns the (possibly smaller) PNG bytes."""
+    try:
+        ns_data = NSData.dataWithBytes_length_(png_bytes, len(png_bytes))
+        image = NSImage.alloc().initWithData_(ns_data)
+        if not image:
+            return png_bytes
+        
+        orig = image.size()
+        if orig.width <= max_dim and orig.height <= max_dim:
+            return png_bytes  # Already small enough
+        
+        scale = min(max_dim / orig.width, max_dim / orig.height)
+        new_w = int(orig.width * scale)
+        new_h = int(orig.height * scale)
+        
+        resized = NSImage.alloc().initWithSize_(NSMakeSize(new_w, new_h))
+        resized.lockFocus()
+        image.drawInRect_fromRect_operation_fraction_(
+            NSMakeRect(0, 0, new_w, new_h),
+            NSMakeRect(0, 0, orig.width, orig.height),
+            NSCompositingOperationCopy,
+            1.0
+        )
+        resized.unlockFocus()
+        
+        result = image_to_png_data(resized)
+        return result if result else png_bytes
+    except Exception:
+        return png_bytes
+
+
+def _save_image_to_disk(png_bytes: bytes) -> Optional[str]:
+    """Save PNG bytes to the images directory and return the file path."""
+    try:
+        IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        # Use content hash as filename for deduplication
+        digest = hashlib.sha256(png_bytes).hexdigest()[:16]
+        path = IMAGES_DIR / f"{digest}.png"
+        if not path.exists():
+            with open(path, 'wb') as f:
+                f.write(png_bytes)
+        return str(path)
+    except Exception as e:
+        print(f"[ClipboardMonitor] Error saving image to disk: {e}")
+        return None
+
+
 class ClipboardMonitor:
     """
     Monitors the system clipboard for changes.
@@ -113,11 +187,7 @@ class ClipboardMonitor:
     Supports text and image content.
     """
     
-    # Path for persistent storage
-    STORAGE_DIR = Path.home() / "Library" / "Application Support" / "ClipX"
-    HISTORY_FILE = STORAGE_DIR / "history.json"
-    
-    def __init__(self, on_change: Optional[Callable[[str], None]] = None, max_history: int = 50, debug: bool = False):
+    def __init__(self, on_change: Optional[Callable[[str], None]] = None, max_history: int = 25, debug: bool = False):
         self.on_change = on_change
         self.max_history = max_history
         self.debug = debug
@@ -150,34 +220,45 @@ class ClipboardMonitor:
         self._save_history()
     
     def _load_history(self):
-        """Load history from disk."""
+        """Load history from disk. Images are NOT loaded into memory — only paths are restored."""
         try:
-            if not self.HISTORY_FILE.exists():
+            if not HISTORY_FILE.exists():
                 print("[ClipboardMonitor] No history file found, starting fresh")
                 return
             
-            with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
+            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             for item_data in data:
-                # Decode image data if present
-                image_data = None
+                image_path = item_data.get('image_path')
                 thumbnail = None
-                if item_data.get('image_data'):
-                    image_data = base64.b64decode(item_data['image_data'])
-                    # Recreate thumbnail from image data
-                    from AppKit import NSImage, NSData
-                    ns_data = NSData.dataWithBytes_length_(image_data, len(image_data))
-                    image = NSImage.alloc().initWithData_(ns_data)
-                    if image:
-                        thumbnail = create_thumbnail(image, 32)
+                
+                # Migrate old format: inline base64 image_data -> disk file
+                if not image_path and item_data.get('image_data'):
+                    raw = base64.b64decode(item_data['image_data'])
+                    raw = _downscale_png(raw)
+                    image_path = _save_image_to_disk(raw)
+                
+                # Create thumbnail from on-disk image (small, ~4KB)
+                if image_path and os.path.exists(image_path):
+                    try:
+                        ns_data = NSData.dataWithBytes_length_(
+                            open(image_path, 'rb').read(), 
+                            os.path.getsize(image_path)
+                        )
+                        img = NSImage.alloc().initWithData_(ns_data)
+                        if img:
+                            thumbnail = create_thumbnail(img, 32)
+                        # img is released — we don't keep it
+                    except Exception:
+                        pass
                 
                 item = ClipboardItem(
                     content_type=item_data['content_type'],
                     timestamp=datetime.fromisoformat(item_data['timestamp']),
                     text_content=item_data.get('text_content'),
-                    image_data=image_data,
-                    thumbnail=thumbnail
+                    image_path=image_path,
+                    thumbnail=thumbnail,
                 )
                 self.history.append(item)
             
@@ -186,10 +267,9 @@ class ClipboardMonitor:
             print(f"[ClipboardMonitor] Error loading history: {e}")
     
     def _save_history(self):
-        """Save history to disk."""
+        """Save history to disk. Image bytes are already on disk — only paths are persisted."""
         try:
-            # Ensure directory exists
-            self.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+            STORAGE_DIR.mkdir(parents=True, exist_ok=True)
             
             data = []
             with self._lock:
@@ -199,12 +279,11 @@ class ClipboardMonitor:
                         'timestamp': item.timestamp.isoformat(),
                         'text_content': item.text_content,
                     }
-                    # Encode image data as base64
-                    if item.image_data:
-                        item_data['image_data'] = base64.b64encode(item.image_data).decode('ascii')
+                    if item.image_path:
+                        item_data['image_path'] = item.image_path
                     data.append(item_data)
             
-            with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
+            with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
             print(f"[ClipboardMonitor] Saved {len(data)} items to history")
@@ -221,6 +300,8 @@ class ClipboardMonitor:
         with self._lock:
             self.history.clear()
         self._save_history()
+        # Clean up orphaned image files
+        self._cleanup_images()
         print("[ClipboardMonitor] History cleared")
     
     def delete_item(self, index: int) -> bool:
@@ -234,11 +315,30 @@ class ClipboardMonitor:
             else:
                 print(f"[ClipboardMonitor] Invalid index {index}, history size is {len(self.history)}")
         
-        # Save outside of lock to prevent deadlock
         if deleted:
             self._save_history()
+            self._cleanup_images()
         
         return deleted
+    
+    def _cleanup_images(self):
+        """Remove image files that are no longer referenced by any history item."""
+        try:
+            if not IMAGES_DIR.exists():
+                return
+            referenced = set()
+            with self._lock:
+                for item in self.history:
+                    if item.image_path:
+                        referenced.add(item.image_path)
+            for img_file in IMAGES_DIR.iterdir():
+                if str(img_file) not in referenced:
+                    try:
+                        img_file.unlink()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     
     def _poll_loop(self):
         """Background polling loop."""
@@ -250,11 +350,11 @@ class ClipboardMonitor:
                 with objc.autorelease_pool():
                     self._check_clipboard()
                     poll_count += 1
-                    if poll_count % 10 == 0:  # Log every 3 seconds
+                    if poll_count % 10 == 0:
                         print(f"[ClipboardMonitor] Polling... (count={poll_count}, history_size={len(self.history)})")
             except Exception as e:
                 print(f"[ClipboardMonitor] Error: {e}")
-            time.sleep(0.3)  # Poll every 300ms
+            time.sleep(0.3)
     
     def _check_clipboard(self):
         """Check if clipboard content has changed."""
@@ -273,7 +373,6 @@ class ClipboardMonitor:
             image_data = None
             thumbnail = None
             
-            # Try PNG first, then TIFF
             types = self._pasteboard.types()
             if types:
                 if NSPasteboardTypePNG in types:
@@ -312,41 +411,47 @@ class ClipboardMonitor:
                     print("[ClipboardMonitor] No recognized content type")
                 return
             
-            self._add_to_history(content_type, text_content if has_text else None, image_data, thumbnail)
+            # Downscale + save image to disk, then discard raw bytes
+            image_path = None
+            if has_image and image_data:
+                image_data = _downscale_png(image_data)
+                image_path = _save_image_to_disk(image_data)
+                # Don't keep raw bytes in memory
+            
+            self._add_to_history(content_type, text_content if has_text else None, image_path, thumbnail)
     
     def _add_to_history(self, content_type: str, text_content: Optional[str], 
-                        image_data: Optional[bytes], thumbnail):
+                        image_path: Optional[str], thumbnail):
         """Add new content to history."""
         with self._lock:
             # For deduplication, remove any existing identical items
             if content_type == "text" and text_content:
                 self.history = [item for item in self.history 
                                if not (item.content_type == "text" and item.text_content == text_content)]
-            elif content_type == "image" and image_data:
+            elif content_type == "image" and image_path:
                 self.history = [item for item in self.history 
-                               if not (item.content_type == "image" and item.image_data == image_data)]
-            elif content_type == "mixed" and text_content and image_data:
+                               if not (item.content_type == "image" and item.image_path == image_path)]
+            elif content_type == "mixed" and text_content and image_path:
                  self.history = [item for item in self.history 
                                if not (item.content_type == "mixed" and 
                                        item.text_content == text_content and 
-                                       item.image_data == image_data)]
+                                       item.image_path == image_path)]
             
-            # Add to front
             item = ClipboardItem(
                 content_type=content_type,
                 timestamp=datetime.now(),
                 text_content=text_content,
-                image_data=image_data,
-                thumbnail=thumbnail
+                image_path=image_path,
+                thumbnail=thumbnail,
             )
             self.history.insert(0, item)
             
-            # Trim to max size
             if len(self.history) > self.max_history:
                 self.history = self.history[:self.max_history]
         
         # Persist to disk
         self._save_history()
+        self._cleanup_images()
         
         # Notify callback
         if self.on_change:
