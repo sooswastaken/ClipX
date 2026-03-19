@@ -143,6 +143,8 @@ class ClipXDelegate(NSObject):
         print("[Main] Starting hotkey handler...", flush=True)
         self._hotkey_handler = HotkeyHandler(
             on_trigger=self._on_hotkey_trigger,
+            on_trigger_2nd=self._on_hotkey_trigger_2nd,
+            on_trigger_3rd=self._on_hotkey_trigger_3rd,
             on_permission_denied=self._on_hotkey_permission_denied,
             debug=self._debug_mode
         )
@@ -394,6 +396,72 @@ class ClipXDelegate(NSObject):
         self.performSelectorOnMainThread_withObject_waitUntilDone_(
             'showPopupFromHotkey', None, False
         )
+
+    def _on_hotkey_trigger_2nd(self):
+        """Called when Cmd+Option+2 is pressed."""
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'pasteHistoryItem:', 1, False
+        )
+
+    def _on_hotkey_trigger_3rd(self):
+        """Called when Cmd+Option+3 is pressed."""
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'pasteHistoryItem:', 2, False
+        )
+
+    def pasteHistoryItem_(self, index):
+        """Paste specific item from history directly."""
+        try:
+            history = self._clipboard_monitor.get_history()
+            if len(history) <= index:
+                print(f"[Main] Not enough items in history to paste index {index}", flush=True)
+                return
+            
+            item = history[index]
+            print(f"[Main] Pasting item at index {index}: {item.preview[:30]}...", flush=True)
+            
+            # Put on clipboard
+            from AppKit import NSPasteboard, NSPasteboardTypeString, NSPasteboardTypePNG
+            pasteboard = NSPasteboard.generalPasteboard()
+            pasteboard.clearContents()
+            
+            if hasattr(item, 'content_type'):
+                if item.content_type == "image" and item.image_data:
+                    from AppKit import NSData
+                    png_data = NSData.dataWithBytes_length_(item.image_data, len(item.image_data))
+                    pasteboard.setData_forType_(png_data, NSPasteboardTypePNG)
+                elif item.content_type == "mixed" and item.image_data and item.text_content:
+                    from AppKit import NSData
+                    png_data = NSData.dataWithBytes_length_(item.image_data, len(item.image_data))
+                    pasteboard.setData_forType_(png_data, NSPasteboardTypePNG)
+                    pasteboard.setString_forType_(item.text_content, NSPasteboardTypeString)
+                else:
+                    pasteboard.setString_forType_(item.text_content or getattr(item, 'content', ''), NSPasteboardTypeString)
+            else:
+                pasteboard.setString_forType_(getattr(item, 'content', ''), NSPasteboardTypeString)
+            
+            # Store frontmost app for refocus
+            from AppKit import NSWorkspace
+            frontmost_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            self._popup.store_frontmost_app(frontmost_app)
+            
+            # Store focused element
+            if self._accessibility:
+                focused_element = self._accessibility.get_focused_element()
+                self._popup.store_focused_element(focused_element)
+            
+            # Schedule Focus/Paste sequence exactly like popup confirmation
+            from Foundation import NSTimer
+            def trigger_paste(timer):
+                 self._popup.focus_manager.perform_paste_sequence()
+
+            NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+                0.15, False, trigger_paste
+            )
+        except Exception as e:
+            print(f"[Main] Error pasting specific item: e")
+            import traceback
+            traceback.print_exc()
     
     def showPopupFromHotkey(self):
         """Show popup - called on main thread."""

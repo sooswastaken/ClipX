@@ -40,9 +40,13 @@ class HotkeyHandler:
     """
     
     def __init__(self, on_trigger: Optional[Callable[[], None]] = None, 
+                 on_trigger_2nd: Optional[Callable[[], None]] = None,
+                 on_trigger_3rd: Optional[Callable[[], None]] = None,
                  on_permission_denied: Optional[Callable[[], None]] = None,
                  debug: bool = False):
         self.on_trigger = on_trigger
+        self.on_trigger_2nd = on_trigger_2nd
+        self.on_trigger_3rd = on_trigger_3rd
         self.on_permission_denied = on_permission_denied
         self.debug = debug
         self._tap = None
@@ -149,6 +153,20 @@ class HotkeyHandler:
                         # Call on main thread
                         self.on_trigger()
                     # Suppress the event so it doesn't propagate
+                    return None
+                
+                KEY_2 = 19
+                KEY_3 = 20
+                if key_code == KEY_2 and cmd_pressed and alt_pressed:
+                    print("[HotkeyHandler] *** HOTKEY DETECTED: Cmd+Option+2 ***")
+                    if self.on_trigger_2nd:
+                        self.on_trigger_2nd()
+                    return None
+                
+                if key_code == KEY_3 and cmd_pressed and alt_pressed:
+                    print("[HotkeyHandler] *** HOTKEY DETECTED: Cmd+Option+3 ***")
+                    if self.on_trigger_3rd:
+                        self.on_trigger_3rd()
                     return None
         except Exception as e:
             print(f"[HotkeyHandler] Callback error: {e}")
