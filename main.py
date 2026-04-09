@@ -63,7 +63,7 @@ import objc
 from clipboard_monitor import ClipboardMonitor
 from hotkey_handler import HotkeyHandler
 from accessibility import AccessibilityHelper, ElementRect
-from ui import ClipboardPopup, calculate_popup_position, ITEM_HEIGHT, PADDING, POPUP_MAX_HEIGHT, EDIT_BUTTON_HEIGHT
+from ui import ClipboardPopup, calculate_popup_position, ITEM_HEIGHT, PADDING, POPUP_MAX_HEIGHT, EDIT_BUTTON_HEIGHT, SEARCH_BAR_HEIGHT
 from updater import Updater
 import startup
 
@@ -257,22 +257,45 @@ class ClipXDelegate(NSObject):
                     return None
                 # Escape
                 elif key_code == 53:
-                    self._popup.hide()
-                    self._popup_visible = False
+                    # If search has text, clear search first (keep popup open)
+                    if self._popup._search_text:
+                        self._popup._search_text = ""
+                        if self._popup._search_field:
+                            self._popup._search_field.setStringValue_("")
+                        self._popup._apply_search_filter()
+                    else:
+                        self._popup.hide()
+                        self._popup_visible = False
                     return None
-                # Number keys 1-8 - direct select and paste
+                # Backspace - route to search
+                elif key_code == 51:
+                    self._popup.handle_search_keypress("", key_code)
+                    return None
+                # Number keys 1-8 - direct select and paste (only when NOT searching)
                 elif key_code in (18, 19, 20, 21, 23, 22, 26, 28):
-                    number_map = {18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8}
-                    self._popup.select_and_confirm_item(number_map[key_code])
-                    self._popup_visible = False
-                    return None
-                # Any other key - dismiss the popup
+                    if not self._popup._search_text:
+                        number_map = {18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8}
+                        self._popup.select_and_confirm_item(number_map[key_code])
+                        self._popup_visible = False
+                        return None
+                    else:
+                        # When searching, treat as search input
+                        characters = event.characters()
+                        if characters:
+                            self._popup.handle_search_keypress(characters, key_code)
+                        return None
+                # Route printable characters to search
                 else:
-                    print(f"[KeyMonitor] Dismissing popup on key {key_code}", flush=True)
-                    self._popup.hide()
-                    self._popup_visible = False
-                    # Return event so the key still works (e.g., Cmd+Tab)
-                    return event
+                    characters = event.characters()
+                    if characters and len(characters) == 1 and characters.isprintable():
+                        self._popup.handle_search_keypress(characters, key_code)
+                        return None
+                    else:
+                        # Non-printable, non-handled key — dismiss popup
+                        print(f"[KeyMonitor] Dismissing popup on key {key_code}", flush=True)
+                        self._popup.hide()
+                        self._popup_visible = False
+                        return event
             
             return event
         
@@ -504,10 +527,10 @@ class ClipXDelegate(NSObject):
                 # Calculate position
                 # Calculate position based on actual content height
                 # Matching ui/popup.py logic:
-                # items_height + edit_button_space + (PADDING * 3)
-                edit_button_space = EDIT_BUTTON_HEIGHT + PADDING
+                # items_height + search_bar_space + (PADDING * 3)
+                search_bar_space = SEARCH_BAR_HEIGHT + PADDING
                 items_height = len(history) * ITEM_HEIGHT
-                content_height = items_height + edit_button_space + (PADDING * 3)
+                content_height = items_height + search_bar_space + (PADDING * 3)
                 
                 popup_height = min(content_height, POPUP_MAX_HEIGHT)
                 

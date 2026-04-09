@@ -23,12 +23,17 @@ from AppKit import (
     NSAnimationContext,
     NSTimer,
     NSMakeRect,
-    NSMakePoint
+    NSMakePoint,
+    NSTextField,
+    NSFont,
+    NSImage,
+    NSImageView,
+    NSTextAlignmentLeft,
 )
 import objc
 
 from clipboard_monitor import ClipboardItem
-from .constants import POPUP_WIDTH, POPUP_MAX_HEIGHT, ITEM_HEIGHT, PADDING, CORNER_RADIUS, EDIT_BUTTON_HEIGHT
+from .constants import POPUP_WIDTH, POPUP_MAX_HEIGHT, ITEM_HEIGHT, PADDING, CORNER_RADIUS, EDIT_BUTTON_HEIGHT, SEARCH_BAR_HEIGHT
 from .item_view import ClipboardItemView
 from .edit_button_view import EditButtonView
 from .animations import PopupAnimationMixin
@@ -73,8 +78,12 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
             
             # Initialize state
             panel._items = []
+            panel._all_items = []  # Unfiltered full list
             panel._item_views = []
             panel._edit_button_view = None
+            panel._search_field = None
+            panel._search_text = ""
+            panel._no_results_label = None
             panel._is_visible = False
             panel._on_select = on_select
             panel._on_delete = None
@@ -202,7 +211,9 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
     
     def update_items(self, items: List[ClipboardItem]):
         """Update the displayed clipboard items."""
-        self._items = items[:50]
+        self._all_items = items[:50]
+        self._search_text = ""
+        self._items = list(self._all_items)
         self._selected_index = 0
         self._rebuild_item_views()
     
@@ -220,17 +231,79 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
             self._edit_button_view.removeFromSuperview()
             self._edit_button_view = None
         
+        # Remove old no-results label
+        if self._no_results_label:
+            self._no_results_label.removeFromSuperview()
+            self._no_results_label = None
+        
         # Reset edit mode on rebuild
         self._is_edit_mode = False
         
+        # Calculate search bar space
+        search_bar_space = SEARCH_BAR_HEIGHT + PADDING
+        
         if not self._items:
+            # Show "No matches" when searching and no results
+            if self._search_text:
+                no_results_height = ITEM_HEIGHT
+                total_content_height = search_bar_space + no_results_height + (PADDING * 3)
+                visible_height = min(total_content_height, POPUP_MAX_HEIGHT)
+                
+                frame = self.frame()
+                frame.size.height = visible_height
+                self.setFrame_display_(frame, True)
+                
+                blur_bounds = self.contentView().bounds()
+                self._blur_view.setFrame_(blur_bounds)
+                
+                # Set up scroll view
+                if not hasattr(self, '_scroll_view') or self._scroll_view is None:
+                    self._scroll_view = NSScrollView.alloc().initWithFrame_(blur_bounds)
+                    self._scroll_view.setHasVerticalScroller_(True)
+                    self._scroll_view.setHasHorizontalScroller_(False)
+                    self._scroll_view.setAutohidesScrollers_(True)
+                    self._scroll_view.setDrawsBackground_(False)
+                    self._scroll_view.setBorderType_(0)
+                    self._scroll_view.setScrollerStyle_(1)
+                    self._blur_view.addSubview_(self._scroll_view)
+                
+                self._scroll_view.setFrame_(blur_bounds)
+                
+                self._items_container = NSView.alloc().initWithFrame_(
+                    NSMakeRect(0, 0, blur_bounds.size.width, total_content_height)
+                )
+                self._items_container.setWantsLayer_(True)
+                self._scroll_view.setDocumentView_(self._items_container)
+                
+                # Add search bar to the container
+                self._setup_search_bar(blur_bounds.size.width, total_content_height)
+                
+                # Add "No matches" label
+                self._no_results_label = NSTextField.alloc().initWithFrame_(
+                    NSMakeRect(PADDING, PADDING, blur_bounds.size.width - (PADDING * 2), no_results_height)
+                )
+                self._no_results_label.setStringValue_("No matches found")
+                from AppKit import NSTextAlignmentCenter
+                self._no_results_label.setAlignment_(NSTextAlignmentCenter)
+                self._no_results_label.setBezeled_(False)
+                self._no_results_label.setDrawsBackground_(False)
+                self._no_results_label.setEditable_(False)
+                self._no_results_label.setSelectable_(False)
+                self._no_results_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.5, 1.0))
+                self._no_results_label.setFont_(NSFont.systemFontOfSize_weight_(13, 0.0))
+                self._items_container.addSubview_(self._no_results_label)
+                
+                # Hide selection view
+                if hasattr(self, '_selection_view'):
+                    self._selection_view.setHidden_(True)
+                
+                self._selected_index = -1  # Nothing selectable
             return
         
-        # Calculate heights - add space for edit button at top
+        # Calculate heights - search bar row includes edit button (no separate row)
         num_items = len(self._items)
         items_height = ITEM_HEIGHT * num_items
-        edit_button_space = EDIT_BUTTON_HEIGHT + PADDING
-        total_content_height = items_height + edit_button_space + (PADDING * 3)
+        total_content_height = items_height + search_bar_space + (PADDING * 3)
         visible_height = min(total_content_height, POPUP_MAX_HEIGHT)
         
         # Resize window
@@ -261,14 +334,17 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
         self._items_container.setWantsLayer_(True)
         self._scroll_view.setDocumentView_(self._items_container)
         
+        # Add search bar + edit button row at the top of the container
+        self._setup_search_bar(blur_bounds.size.width, total_content_height)
+        
         # Add selection view to the new container
         if hasattr(self, '_selection_view'):
             self._selection_view.removeFromSuperview()
             self._items_container.addSubview_(self._selection_view)
             
-            # Position for first clipboard item (index 1, after edit button)
+            # Position for first clipboard item (index 1)
             if self._items:
-                y = total_content_height - PADDING - edit_button_space - ITEM_HEIGHT
+                y = total_content_height - PADDING - search_bar_space - ITEM_HEIGHT
                 start_frame = NSMakeRect(PADDING, y, blur_bounds.size.width - (PADDING * 2), ITEM_HEIGHT)
                 self._selection_view.setFrame_(start_frame)
                 self._selection_view.setHidden_(False)
@@ -277,24 +353,10 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
         
         inner_width = blur_bounds.size.width - (PADDING * 2)
         
-        # Create edit button at top-right (index 0)
-        edit_btn_width = 64
-        edit_btn_x = blur_bounds.size.width - PADDING - edit_btn_width
-        edit_btn_y = total_content_height - PADDING - EDIT_BUTTON_HEIGHT
-        
-        self._edit_button_view = EditButtonView.alloc_with_callbacks(
-            edit_btn_width,
-            on_click=self._toggle_edit_mode,
-            on_hover=self._on_item_hovered,
-            index=0
-        )
-        self._edit_button_view.setFrame_(NSMakeRect(edit_btn_x, edit_btn_y, edit_btn_width, EDIT_BUTTON_HEIGHT))
-        self._items_container.addSubview_(self._edit_button_view)
-        
-        # Create item views (indices 1+)
+        # Create item views (indices 1+, edit button is index 0 but placed in search bar row)
         for i, item in enumerate(self._items):
             actual_index = i + 1  # Shift indices by 1 for edit button
-            y = total_content_height - PADDING - edit_button_space - ((i + 1) * ITEM_HEIGHT)
+            y = total_content_height - PADDING - search_bar_space - ((i + 1) * ITEM_HEIGHT)
             view = ClipboardItemView.alloc_with_item(
                 item, actual_index, inner_width, 
                 on_click=self._on_item_clicked,
@@ -313,6 +375,119 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
         # Scroll to top
         if self._items:
             self._scroll_to_item(1)
+    
+    def _setup_search_bar(self, container_width, total_content_height):
+        """Create and add the search bar + edit button row at the top of the items container."""
+        search_y = total_content_height - PADDING - SEARCH_BAR_HEIGHT
+        
+        # Edit button sits to the right of the search field
+        edit_btn_width = 64
+        gap = 6
+        search_width = container_width - (PADDING * 2) - edit_btn_width - gap
+        
+        # Search bar background container
+        search_container = NSView.alloc().initWithFrame_(
+            NSMakeRect(PADDING, search_y, search_width, SEARCH_BAR_HEIGHT)
+        )
+        search_container.setWantsLayer_(True)
+        search_layer = search_container.layer()
+        if search_layer:
+            search_layer.setCornerRadius_(8.0)
+            search_layer.setBackgroundColor_(
+                NSColor.colorWithWhite_alpha_(1.0, 0.08).CGColor()
+            )
+            search_layer.setBorderWidth_(0.5)
+            search_layer.setBorderColor_(
+                NSColor.colorWithWhite_alpha_(1.0, 0.06).CGColor()
+            )
+        
+        # Magnifying glass icon
+        icon_size = 14
+        icon_x = 8
+        icon_y = (SEARCH_BAR_HEIGHT - icon_size) / 2
+        icon_view = NSImageView.alloc().initWithFrame_(
+            NSMakeRect(icon_x, icon_y, icon_size, icon_size)
+        )
+        search_icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "magnifyingglass", None
+        )
+        if search_icon:
+            icon_view.setImage_(search_icon)
+            icon_view.setContentTintColor_(NSColor.colorWithWhite_alpha_(0.45, 1.0))
+        search_container.addSubview_(icon_view)
+        
+        # Text field (vertically centered, font size 13 is ~16pt high)
+        text_x = icon_x + icon_size + 6
+        text_width = search_width - text_x - 8
+        text_height = 16
+        text_y = (SEARCH_BAR_HEIGHT - text_height) / 2
+        
+        self._search_field = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(text_x, text_y, text_width, text_height)
+        )
+        self._search_field.setStringValue_(self._search_text)
+        self._search_field.setPlaceholderString_("Search clips...")
+        self._search_field.setBezeled_(False)
+        self._search_field.setDrawsBackground_(False)
+        self._search_field.setEditable_(False)  # We handle keyboard input manually
+        self._search_field.setSelectable_(False)
+        self._search_field.setTextColor_(NSColor.colorWithWhite_alpha_(0.85, 1.0))
+        self._search_field.setFont_(NSFont.systemFontOfSize_weight_(13, 0.0))
+        self._search_field.setFocusRingType_(1)  # NSFocusRingTypeNone
+        search_container.addSubview_(self._search_field)
+        
+        self._items_container.addSubview_(search_container)
+        
+        # Edit button — right of search bar, vertically centered with it
+        edit_btn_x = PADDING + search_width + gap
+        edit_btn_y = search_y + (SEARCH_BAR_HEIGHT - EDIT_BUTTON_HEIGHT) / 2
+        
+        self._edit_button_view = EditButtonView.alloc_with_callbacks(
+            edit_btn_width,
+            on_click=self._toggle_edit_mode,
+            on_hover=self._on_item_hovered,
+            index=0
+        )
+        self._edit_button_view.setFrame_(NSMakeRect(edit_btn_x, edit_btn_y, edit_btn_width, EDIT_BUTTON_HEIGHT))
+        self._items_container.addSubview_(self._edit_button_view)
+    
+    def _apply_search_filter(self):
+        """Filter items based on current search text and rebuild views."""
+        query = self._search_text.strip().lower()
+        if not query:
+            self._items = list(self._all_items)
+        else:
+            self._items = [
+                item for item in self._all_items
+                if (item.text_content and query in item.text_content.lower())
+                or (item.content_type == "image" and "image" in query)
+            ]
+        self._selected_index = 0
+        self._rebuild_item_views()
+    
+    def handle_search_keypress(self, characters: str, key_code: int) -> bool:
+        """Handle a keypress for the search field.
+        Returns True if the key was consumed by search, False otherwise."""
+        BACKSPACE = 51
+        
+        if key_code == BACKSPACE:
+            if self._search_text:
+                self._search_text = self._search_text[:-1]
+                if self._search_field:
+                    self._search_field.setStringValue_(self._search_text)
+                self._apply_search_filter()
+                return True
+            return False  # Nothing to delete, let caller handle
+        
+        # Accept printable characters
+        if characters and len(characters) == 1 and characters.isprintable():
+            self._search_text += characters
+            if self._search_field:
+                self._search_field.setStringValue_(self._search_text)
+            self._apply_search_filter()
+            return True
+        
+        return False
     
     def show_at_position(self, x: float, y: float, show_above: bool = False):
         """Show the popup at the specified position with animation."""
@@ -344,6 +519,9 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
     
     def hide(self, refocus: bool = True, animate: bool = True):
         """Hide the popup with animation."""
+        # Clear search state when hiding
+        self._search_text = ""
+        
         if animate:
             self._animate_hide() # From Mixin
         else:
@@ -634,11 +812,27 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
         elif key_code == 36:  # Enter / Return
             self.confirm_selection()
         elif key_code == 53:  # Escape
-            self.hide()
+            # If search has text, clear search first
+            if self._search_text:
+                self._search_text = ""
+                if self._search_field:
+                    self._search_field.setStringValue_("")
+                self._apply_search_filter()
+            else:
+                self.hide()
         elif key_code in self._NUMBER_KEYCODES:
-            self.select_and_confirm_item(self._NUMBER_KEYCODES[key_code])
+            # Number shortcuts only when NOT searching
+            if not self._search_text:
+                self.select_and_confirm_item(self._NUMBER_KEYCODES[key_code])
+            else:
+                # When searching, treat number keys as search input
+                characters = event.characters()
+                self.handle_search_keypress(characters, key_code)
         else:
-            pass
+            # Route printable characters to search
+            characters = event.characters()
+            if characters:
+                self.handle_search_keypress(characters, key_code)
     
     def canBecomeKeyWindow(self):
         return True

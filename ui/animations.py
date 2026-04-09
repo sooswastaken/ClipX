@@ -19,7 +19,8 @@ from .constants import (
     ITEM_HEIGHT, 
     EDIT_BUTTON_HEIGHT, 
     POPUP_MAX_HEIGHT,
-    POPUP_WIDTH
+    POPUP_WIDTH,
+    SEARCH_BAR_HEIGHT,
 )
 
 class PopupAnimationMixin:
@@ -207,9 +208,9 @@ class PopupAnimationMixin:
             
             # Calculate new dimensions (for after the animation)
             num_items = len(self._items)
-            edit_button_space = EDIT_BUTTON_HEIGHT + PADDING
+            search_bar_space = SEARCH_BAR_HEIGHT + PADDING
             items_height = ITEM_HEIGHT * num_items
-            new_total_content_height = items_height + edit_button_space + (PADDING * 3)
+            new_total_content_height = items_height + search_bar_space + (PADDING * 3)
             new_visible_height = min(new_total_content_height, POPUP_MAX_HEIGHT)
             
             # Store current values for the closure
@@ -347,13 +348,14 @@ class PopupAnimationMixin:
                     
                     # Reposition edit button
                     if popup._edit_button_view:
+                        search_y = new_total_content_height - PADDING - SEARCH_BAR_HEIGHT
                         edit_btn_x = blur_width - PADDING - 64
-                        edit_btn_y = new_total_content_height - PADDING - EDIT_BUTTON_HEIGHT
+                        edit_btn_y = search_y + (SEARCH_BAR_HEIGHT - EDIT_BUTTON_HEIGHT) / 2
                         popup._edit_button_view.setFrameOrigin_(NSMakePoint(edit_btn_x, edit_btn_y))
                     
                     # Reposition all items to their final correct positions
                     for i, view in enumerate(popup._item_views):
-                        y = new_total_content_height - PADDING - edit_button_space - ((i + 1) * ITEM_HEIGHT)
+                        y = new_total_content_height - PADDING - search_bar_space - ((i + 1) * ITEM_HEIGHT)
                         view.setFrameOrigin_(NSMakePoint(PADDING, y))
                     
                     # Update selection

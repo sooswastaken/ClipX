@@ -11,6 +11,7 @@ from .constants import (
     ANIMATION_DURATION,
     EDIT_BUTTON_HEIGHT,
     DELETE_BUTTON_SIZE,
+    SEARCH_BAR_HEIGHT,
 )
 from .item_view import ClipboardItemView
 from .edit_button_view import EditButtonView
