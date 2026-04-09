@@ -29,6 +29,9 @@ from AppKit import (
     NSImage,
     NSImageView,
     NSTextAlignmentLeft,
+    NSAttributedString,
+    NSForegroundColorAttributeName,
+    NSFontAttributeName,
 )
 import objc
 
@@ -413,7 +416,7 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
         )
         if search_icon:
             icon_view.setImage_(search_icon)
-            icon_view.setContentTintColor_(NSColor.colorWithWhite_alpha_(0.45, 1.0))
+            icon_view.setContentTintColor_(NSColor.colorWithWhite_alpha_(0.7, 1.0))
         search_container.addSubview_(icon_view)
         
         # Text field (vertically centered, font size 13 is ~16pt high)
@@ -426,7 +429,17 @@ class ClipboardPopup(NSPanel, PopupAnimationMixin):
             NSMakeRect(text_x, text_y, text_width, text_height)
         )
         self._search_field.setStringValue_(self._search_text)
-        self._search_field.setPlaceholderString_("Search clips...")
+        
+        # Style placeholder to match edit button (white 0.7)
+        placeholder_attrs = {
+            NSForegroundColorAttributeName: NSColor.colorWithWhite_alpha_(0.7, 1.0),
+            NSFontAttributeName: NSFont.systemFontOfSize_weight_(13, 0.0)
+        }
+        placeholder = NSAttributedString.alloc().initWithString_attributes_(
+            "Search clips...", placeholder_attrs
+        )
+        self._search_field.setPlaceholderAttributedString_(placeholder)
+        
         self._search_field.setBezeled_(False)
         self._search_field.setDrawsBackground_(False)
         self._search_field.setEditable_(False)  # We handle keyboard input manually
